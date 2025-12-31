@@ -1,0 +1,13 @@
+numpy>=1.26
+scipy>=1.11
+pandas>=2.1
+scikit-learn>=1.4
+triton>=2.1
+tqdm>=4.66
+psutil>=5.9
+timeit2>=0.0.5
+matplotlib>=3.8
+seaborn>=0.13
+pytest>=8.0
+black>=24.1
+isort>=5.13
