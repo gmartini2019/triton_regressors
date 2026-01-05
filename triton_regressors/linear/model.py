@@ -1,65 +1,36 @@
 import torch
-from .kernels import linear_regression_kernel
-
+from triton_regressors.linear.kernels import linear_regression_kernel
+from triton_regressors.utils.torch_train import center_if_needed, recover_intercept
 
 class TritonLinearRegression:
-    """
-    sklearn-like Linear Regression (GPU inference via Triton)
-    """
-
-    def __init__(self, fit_intercept=True, positive=False):
-        self.fit_intercept = fit_intercept
-        self.positive = positive
+    def __init__(self, fit_intercept=True):
+        self.fit_intercept = bool(fit_intercept)
         self._fitted = False
 
     def fit(self, X, y):
-        """
-        CPU training using sklearn, GPU inference via Triton
-        """
-        import numpy as np
-        from sklearn.linear_model import LinearRegression
+        X = torch.as_tensor(X, device="cuda", dtype=torch.float64).contiguous()
+        y = torch.as_tensor(y, device="cuda", dtype=torch.float64).contiguous().view(-1)
 
-        sk = LinearRegression(
-            fit_intercept=self.fit_intercept,
-            positive=self.positive,
-        )
-        sk.fit(X, y)
+        Xc, yc, X_mean, y_mean = center_if_needed(X, y, self.fit_intercept)
 
-        self.coef_ = torch.tensor(
-            sk.coef_, device="cuda", dtype=torch.float32
-        )
-        self.intercept_ = torch.tensor(
-            sk.intercept_, device="cuda", dtype=torch.float32
-        )
+        w = torch.linalg.lstsq(Xc, yc).solution
+
+        b = recover_intercept(X_mean, y_mean, w)
+
+        self.coef_ = w.to(torch.float32)
+        self.intercept_ = b.to(torch.float32)
         self.n_features_in_ = X.shape[1]
         self._fitted = True
-
         return self
 
     def predict(self, X):
-        assert self._fitted, "Model must be fitted first"
-        assert X.ndim == 2
-        assert X.shape[1] == self.n_features_in_
-
-        if not torch.is_tensor(X):
-            X = torch.tensor(X, device="cuda", dtype=torch.float32)
-        else:
-            X = X.to(device="cuda", dtype=torch.float32)
-
+        assert self._fitted
+        X = torch.as_tensor(X, device="cuda", dtype=torch.float32).contiguous()
         B, D = X.shape
         Y = torch.empty((B,), device="cuda", dtype=torch.float32)
 
-        grid = (B,)
-
-        linear_regression_kernel[grid](
-            X,
-            self.coef_,
-            self.intercept_,
-            Y,
-            B,
-            D,
-            X.stride(0),
-            X.stride(1),
+        linear_regression_kernel[(B,)](
+            X, self.coef_, self.intercept_, Y,
+            B, D, X.stride(0), X.stride(1),
         )
-
         return Y
