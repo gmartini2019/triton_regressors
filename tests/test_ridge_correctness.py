@@ -4,7 +4,7 @@ import torch
 from triton_regressors.ridge.model import TritonRidgeRegression
 
 
-def test_ridge_correctness_matches_torch_reference():
+def test_ridge_closed_form_matches_torch_reference():
     torch.manual_seed(0)
     np.random.seed(0)
 
@@ -14,35 +14,40 @@ def test_ridge_correctness_matches_torch_reference():
     X = np.random.randn(B, D).astype(np.float32)
     y = np.random.randn(B).astype(np.float32)
 
-    X_t = torch.tensor(X, device="cuda", dtype=torch.float32)
-    y_t = torch.tensor(y, device="cuda", dtype=torch.float32)
+    X_t = torch.tensor(X, device="cuda")
+    y_t = torch.tensor(y, device="cuda")
 
     X_mean = X_t.mean(dim=0)
     y_mean = y_t.mean()
+
     Xc = X_t - X_mean
     yc = y_t - y_mean
 
-    XtX_ref = Xc.T @ Xc
-    XtX_ref = 0.5 * (XtX_ref + XtX_ref.T)
-    XtX_ref += alpha * torch.eye(D, device="cuda", dtype=torch.float32)
+    XtX = Xc.T @ Xc
+    XtX = 0.5 * (XtX + XtX.T)
+    XtX += alpha * torch.eye(D, device="cuda")
 
-    Xty_ref = Xc.T @ yc
+    Xty = Xc.T @ yc
 
-    L = torch.linalg.cholesky(XtX_ref)
-    w_ref = torch.cholesky_solve(Xty_ref.unsqueeze(1), L).squeeze(1)
+    L = torch.linalg.cholesky(XtX)
+    w_ref = torch.cholesky_solve(Xty.unsqueeze(1), L).squeeze(1)
     b_ref = y_mean - X_mean @ w_ref
 
     y_ref = (X_t @ w_ref + b_ref).cpu().numpy()
 
 
-    model = TritonRidgeRegression(alpha=alpha, fit_intercept=True)
+    model = TritonRidgeRegression(
+        alpha=alpha,
+        fit_intercept=True,
+        solver="closed_form",
+    )
     model.fit(X, y)
-
 
     y_triton = model.predict(X_t).cpu().numpy()
 
-    XtX_ref_noreg = Xc.T @ Xc
-    XtX_ref_noreg = 0.5 * (XtX_ref_noreg + XtX_ref_noreg.T)
-    XtX_ref_reg = XtX_ref_noreg + alpha * torch.eye(D, device="cuda", dtype=torch.float32)
-
-    assert np.allclose(y_ref, y_triton, rtol=1e-3, atol=1e-2)
+    assert np.allclose(
+        y_ref,
+        y_triton,
+        rtol=1e-3,
+        atol=1e-2,
+    )
