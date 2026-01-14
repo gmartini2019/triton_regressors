@@ -25,7 +25,6 @@ def test_lasso_torch_solver_matches_sklearn_predictions():
         method="fista",
         max_iter=3000,
         tol=1e-6,
-        verbose=False,
     )
     model.fit(X, y)
 
